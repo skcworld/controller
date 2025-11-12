@@ -60,12 +60,13 @@ class ControllerManager(Node):
         """Initialize controller node and all components."""
         try:
             # Get essential parameters
-            self.LUT_path = self.get_parameter('lookup_table_path').as_string()
-            self.mode = self.get_parameter('mode').as_string()
+            # rclpy Parameter API exposes the value via the 'value' attribute
+            self.LUT_path = self.get_parameter('lookup_table_path').value
+            self.mode = self.get_parameter('mode').value
 
             # Get TF frame parameters
-            self.map_frame = self.get_parameter('map_frame').as_string() if self.has_parameter('map_frame') else 'map'
-            self.base_link_frame = self.get_parameter('base_link_frame').as_string() if self.has_parameter('base_link_frame') else 'base_link'
+            self.map_frame = self.get_parameter('map_frame').value if self.has_parameter('map_frame') else 'map'
+            self.base_link_frame = self.get_parameter('base_link_frame').value if self.has_parameter('base_link_frame') else 'base_link'
 
             self.get_logger().info(f"Using lookup table: {self.LUT_path}")
             self.get_logger().info(f"Using TF: {self.map_frame} -> {self.base_link_frame}")
@@ -163,7 +164,7 @@ class ControllerManager(Node):
         self.get_logger().info("Initializing MAP controller...")
 
         # Load L1 parameters from YAML
-        l1_params_path = self.get_parameter('l1_params_path').as_string()
+        l1_params_path = self.get_parameter('l1_params_path').value
         self.get_logger().info(f"Loading L1 parameters from: {l1_params_path}")
         self.declare_l1_dynamic_parameters_from_yaml(l1_params_path)
 
@@ -179,20 +180,20 @@ class ControllerManager(Node):
             self.get_logger().warn(f"[MAP] {msg}")
 
         self.map_controller = MAP_Controller(
-            self.get_parameter('t_clip_min').as_double(),
-            self.get_parameter('t_clip_max').as_double(),
-            self.get_parameter('m_l1').as_double(),
-            self.get_parameter('q_l1').as_double(),
-            self.get_parameter('speed_lookahead').as_double(),
-            self.get_parameter('lat_err_coeff').as_double(),
-            self.get_parameter('acc_scaler_for_steer').as_double(),
-            self.get_parameter('dec_scaler_for_steer').as_double(),
-            self.get_parameter('start_scale_speed').as_double(),
-            self.get_parameter('end_scale_speed').as_double(),
-            self.get_parameter('downscale_factor').as_double(),
-            self.get_parameter('speed_lookahead_for_steer').as_double(),
-            self.get_parameter('diff_threshold').as_double(),
-            self.get_parameter('deacc_gain').as_double(),
+            self.get_parameter('t_clip_min').value,
+            self.get_parameter('t_clip_max').value,
+            self.get_parameter('m_l1').value,
+            self.get_parameter('q_l1').value,
+            self.get_parameter('speed_lookahead').value,
+            self.get_parameter('lat_err_coeff').value,
+            self.get_parameter('acc_scaler_for_steer').value,
+            self.get_parameter('dec_scaler_for_steer').value,
+            self.get_parameter('start_scale_speed').value,
+            self.get_parameter('end_scale_speed').value,
+            self.get_parameter('downscale_factor').value,
+            self.get_parameter('speed_lookahead_for_steer').value,
+            self.get_parameter('diff_threshold').value,
+            self.get_parameter('deacc_gain').value,
             self.LUT_path,
             log_info,
             log_warn
@@ -205,7 +206,7 @@ class ControllerManager(Node):
         self.get_logger().info("Initializing PP controller...")
 
         # Load PP parameters from YAML
-        pp_params_path = self.get_parameter('pp_params_path').as_string()
+        pp_params_path = self.get_parameter('pp_params_path').value
         self.get_logger().info(f"Loading PP parameters from: {pp_params_path}")
         self.declare_pp_dynamic_parameters_from_yaml(pp_params_path)
 
@@ -221,18 +222,18 @@ class ControllerManager(Node):
             self.get_logger().warn(f"[PP] {msg}")
 
         self.pp_controller = PP_Controller(
-            self.get_parameter('t_clip_min').as_double(),
-            self.get_parameter('t_clip_max').as_double(),
-            self.get_parameter('m_l1').as_double(),
-            self.get_parameter('q_l1').as_double(),
-            self.get_parameter('speed_lookahead').as_double(),
-            self.get_parameter('lat_err_coeff').as_double(),
-            self.get_parameter('acc_scaler_for_steer').as_double(),
-            self.get_parameter('dec_scaler_for_steer').as_double(),
-            self.get_parameter('start_scale_speed').as_double(),
-            self.get_parameter('end_scale_speed').as_double(),
-            self.get_parameter('downscale_factor').as_double(),
-            self.get_parameter('speed_lookahead_for_steer').as_double(),
+            self.get_parameter('t_clip_min').value,
+            self.get_parameter('t_clip_max').value,
+            self.get_parameter('m_l1').value,
+            self.get_parameter('q_l1').value,
+            self.get_parameter('speed_lookahead').value,
+            self.get_parameter('lat_err_coeff').value,
+            self.get_parameter('acc_scaler_for_steer').value,
+            self.get_parameter('dec_scaler_for_steer').value,
+            self.get_parameter('start_scale_speed').value,
+            self.get_parameter('end_scale_speed').value,
+            self.get_parameter('downscale_factor').value,
+            self.get_parameter('speed_lookahead_for_steer').value,
             self.LUT_path,
             log_info,
             log_warn
@@ -365,10 +366,7 @@ class ControllerManager(Node):
             elif self.mode == "PP":
                 speed, steer = self.pp_cycle()
             else:
-                self.get_logger().error_throttle(2.0, f"Unsupported mode: {self.mode}")
                 return
-
-            self.get_logger().debug(f"Control output: steering={steer:.6f}, speed={speed:.2f}")
 
             # Create and publish drive message
             ack = AckermannDriveStamped()
@@ -515,37 +513,37 @@ class ControllerManager(Node):
 
         if self.mode == "MAP" and hasattr(self, 'map_controller'):
             # Update MAP controller parameters
-            self.map_controller.set_t_clip_min(self.get_parameter('t_clip_min').as_double())
-            self.map_controller.set_t_clip_max(self.get_parameter('t_clip_max').as_double())
-            self.map_controller.set_m_l1(self.get_parameter('m_l1').as_double())
-            self.map_controller.set_q_l1(self.get_parameter('q_l1').as_double())
-            self.map_controller.set_speed_lookahead(self.get_parameter('speed_lookahead').as_double())
-            self.map_controller.set_lat_err_coeff(self.get_parameter('lat_err_coeff').as_double())
-            self.map_controller.set_acc_scaler_for_steer(self.get_parameter('acc_scaler_for_steer').as_double())
-            self.map_controller.set_dec_scaler_for_steer(self.get_parameter('dec_scaler_for_steer').as_double())
-            self.map_controller.set_start_scale_speed(self.get_parameter('start_scale_speed').as_double())
-            self.map_controller.set_end_scale_speed(self.get_parameter('end_scale_speed').as_double())
-            self.map_controller.set_downscale_factor(self.get_parameter('downscale_factor').as_double())
-            self.map_controller.set_speed_lookahead_for_steer(self.get_parameter('speed_lookahead_for_steer').as_double())
-            self.map_controller.set_diff_threshold(self.get_parameter('diff_threshold').as_double())
-            self.map_controller.set_deacc_gain(self.get_parameter('deacc_gain').as_double())
+            self.map_controller.set_t_clip_min(self.get_parameter('t_clip_min').value)
+            self.map_controller.set_t_clip_max(self.get_parameter('t_clip_max').value)
+            self.map_controller.set_m_l1(self.get_parameter('m_l1').value)
+            self.map_controller.set_q_l1(self.get_parameter('q_l1').value)
+            self.map_controller.set_speed_lookahead(self.get_parameter('speed_lookahead').value)
+            self.map_controller.set_lat_err_coeff(self.get_parameter('lat_err_coeff').value)
+            self.map_controller.set_acc_scaler_for_steer(self.get_parameter('acc_scaler_for_steer').value)
+            self.map_controller.set_dec_scaler_for_steer(self.get_parameter('dec_scaler_for_steer').value)
+            self.map_controller.set_start_scale_speed(self.get_parameter('start_scale_speed').value)
+            self.map_controller.set_end_scale_speed(self.get_parameter('end_scale_speed').value)
+            self.map_controller.set_downscale_factor(self.get_parameter('downscale_factor').value)
+            self.map_controller.set_speed_lookahead_for_steer(self.get_parameter('speed_lookahead_for_steer').value)
+            self.map_controller.set_diff_threshold(self.get_parameter('diff_threshold').value)
+            self.map_controller.set_deacc_gain(self.get_parameter('deacc_gain').value)
             
             self.get_logger().info("Updated MAP parameters")
 
         elif self.mode == "PP" and hasattr(self, 'pp_controller'):
             # Update PP controller parameters
-            self.pp_controller.set_t_clip_min(self.get_parameter('t_clip_min').as_double())
-            self.pp_controller.set_t_clip_max(self.get_parameter('t_clip_max').as_double())
-            self.pp_controller.set_m_l1(self.get_parameter('m_l1').as_double())
-            self.pp_controller.set_q_l1(self.get_parameter('q_l1').as_double())
-            self.pp_controller.set_speed_lookahead(self.get_parameter('speed_lookahead').as_double())
-            self.pp_controller.set_lat_err_coeff(self.get_parameter('lat_err_coeff').as_double())
-            self.pp_controller.set_acc_scaler_for_steer(self.get_parameter('acc_scaler_for_steer').as_double())
-            self.pp_controller.set_dec_scaler_for_steer(self.get_parameter('dec_scaler_for_steer').as_double())
-            self.pp_controller.set_start_scale_speed(self.get_parameter('start_scale_speed').as_double())
-            self.pp_controller.set_end_scale_speed(self.get_parameter('end_scale_speed').as_double())
-            self.pp_controller.set_downscale_factor(self.get_parameter('downscale_factor').as_double())
-            self.pp_controller.set_speed_lookahead_for_steer(self.get_parameter('speed_lookahead_for_steer').as_double())
+            self.pp_controller.set_t_clip_min(self.get_parameter('t_clip_min').value)
+            self.pp_controller.set_t_clip_max(self.get_parameter('t_clip_max').value)
+            self.pp_controller.set_m_l1(self.get_parameter('m_l1').value)
+            self.pp_controller.set_q_l1(self.get_parameter('q_l1').value)
+            self.pp_controller.set_speed_lookahead(self.get_parameter('speed_lookahead').value)
+            self.pp_controller.set_lat_err_coeff(self.get_parameter('lat_err_coeff').value)
+            self.pp_controller.set_acc_scaler_for_steer(self.get_parameter('acc_scaler_for_steer').value)
+            self.pp_controller.set_dec_scaler_for_steer(self.get_parameter('dec_scaler_for_steer').value)
+            self.pp_controller.set_start_scale_speed(self.get_parameter('start_scale_speed').value)
+            self.pp_controller.set_end_scale_speed(self.get_parameter('end_scale_speed').value)
+            self.pp_controller.set_downscale_factor(self.get_parameter('downscale_factor').value)
+            self.pp_controller.set_speed_lookahead_for_steer(self.get_parameter('speed_lookahead_for_steer').value)
             
             self.get_logger().info("Updated PP parameters")
 

@@ -22,6 +22,20 @@ def launch_setup(context, *args, **kwargs):
     # Determine environment (sim or real)
     is_sim = env.lower() == 'sim'
     
+    # Dynamic topic remappings based on environment
+    # In sim: topics are published as /ego_racecar/odom, etc.
+    # In real: topics are published as /odom, etc.
+    if is_sim:
+        odom_remapping = ('/odom', '/ego_racecar/odom')
+        frenet_odom_remapping = ('/frenet/odom', '/car_state/frenet/odom')
+        map_frame_param = 'map'
+        base_link_frame_param = 'ego_racecar/base_link'
+    else:
+        odom_remapping = ('/odom', '/odom')
+        frenet_odom_remapping = ('/frenet/odom', '/frenet/odom')
+        map_frame_param = 'map'
+        base_link_frame_param = 'base_link'
+    
     # Determine which parameter file to use
     if controller_type == 'MAP':
         if is_sim:
@@ -88,14 +102,15 @@ def launch_setup(context, *args, **kwargs):
                 'lookup_table_path': lookup_table_file,
                 'l1_params_path': params_file if controller_type == 'MAP' else '',
                 'pp_params_path': params_file if controller_type == 'PP' else '',
-                'map_frame': 'map',
-                'base_link_frame': 'base_link',
+                'map_frame': map_frame_param,
+                'base_link_frame': base_link_frame_param,
+                'use_sim_time': False,  # Use wall clock time instead of simulation time
             }
         ],
         remappings=[
             ('/local_waypoints', '/local_waypoints'),
-            ('/odom', '/odom'),
-            ('/frenet/odom', '/frenet/odom'),
+            odom_remapping,
+            frenet_odom_remapping,
             ('/sensors/imu/raw', '/sensors/imu/raw'),
             ('/drive', '/drive'),
         ]
