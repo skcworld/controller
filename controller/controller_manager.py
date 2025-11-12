@@ -86,10 +86,13 @@ class ControllerManager(Node):
             self.position_in_map_frenet: Optional[np.ndarray] = None
             self.acc_now: np.ndarray = np.zeros(10)
             self.waypoint_safety_counter: int = 0
-            self.rate: int = 100  # Hz
+            self.rate: int = 40  # Hz (must match crazy_controller rate)
 
             # State lock
             self.state_lock = Lock()
+
+            # Timing measurement for control loop (counter-based)
+            self.timing_log_counter = 0
 
             # Initialize controller based on mode
             if self.mode == "MAP":
@@ -234,6 +237,8 @@ class ControllerManager(Node):
             self.get_parameter('end_scale_speed').value,
             self.get_parameter('downscale_factor').value,
             self.get_parameter('speed_lookahead_for_steer').value,
+            self.get_parameter('diff_threshold').value,
+            self.get_parameter('deacc_gain').value,
             self.LUT_path,
             log_info,
             log_warn
@@ -312,6 +317,8 @@ class ControllerManager(Node):
         declare_double('end_scale_speed', params['end_scale_speed'], 0.0, 10.0, 0.01)
         declare_double('downscale_factor', params['downscale_factor'], 0.0, 0.5, 0.01)
         declare_double('speed_lookahead_for_steer', params['speed_lookahead_for_steer'], 0.0, 0.2, 0.01)
+        declare_double('diff_threshold', params['diff_threshold'], 0.0, 20.0, 0.1)
+        declare_double('deacc_gain', params['deacc_gain'], 0.0, 1.0, 0.01)
 
     def wait_for_messages(self):
         """Wait for all required messages before starting control loop."""
@@ -337,22 +344,23 @@ class ControllerManager(Node):
                 )
                 car_state_received = True
 
-            # Log waiting status every 2 seconds
-            elapsed = (self.get_clock().now() - start_time).nanoseconds / 1e9
-            if int(elapsed) % 2 == 0 and elapsed > 0:
-                self.get_logger().info(
-                    f"Waiting... waypoints:{'✓' if waypoint_array_received else '✗'}, "
-                    f"car_state:{'✓' if car_state_received else '✗'} ({elapsed:.1f}s elapsed)"
-                )
-
         self.get_logger().info("✓ All required messages received. Controller ready to start!")
 
     def control_loop(self):
         """Main control loop - called at fixed rate."""
+        import time
+        
+        # Start timing measurement
+        loop_start_time = time.perf_counter()
+        
         # Check if shutdown was requested
         if self.shutdown_requested:
             self.publish_stop_command()
             return
+
+        # Update position from TF at control loop frequency for real-time accuracy
+        if not self.update_position_from_tf():
+            return  # Skip this cycle if TF lookup fails
 
         # Check if all required data is available
         if (self.speed_now is None or self.position_in_map is None or
@@ -370,12 +378,22 @@ class ControllerManager(Node):
 
             # Create and publish drive message
             ack = AckermannDriveStamped()
-            ack.header.stamp = self.get_clock().now().to_msg()
+            now = self.get_clock().now()
+            ack.header.stamp = now.to_msg()
             ack.header.frame_id = 'base_link'
             ack.drive.steering_angle = float(steer)
             ack.drive.speed = float(speed)
 
             self.drive_pub.publish(ack)
+
+            # End timing measurement and log every 5 seconds (200 cycles at 40Hz)
+            loop_end_time = time.perf_counter()
+            duration_ms = (loop_end_time - loop_start_time) * 1000.0
+            
+            self.timing_log_counter += 1
+            if self.timing_log_counter >= 200:  # 5 seconds at 40Hz
+                self.get_logger().info(f"[{self.mode}] Control loop execution time: {duration_ms:.3f} ms")
+                self.timing_log_counter = 0
 
         except Exception as e:
             self.get_logger().error(f"Control loop error: {e}")
@@ -402,6 +420,8 @@ class ControllerManager(Node):
 
     def pp_cycle(self) -> Tuple[float, float]:
         """Execute PP control cycle."""
+        # import time
+        
         with self.state_lock:
             res = self.pp_controller.main_loop(
                 self.position_in_map,
@@ -410,6 +430,9 @@ class ControllerManager(Node):
                 np.array([self.position_in_map_frenet[0], self.position_in_map_frenet[1]]),
                 self.acc_now
             )
+
+        # Artificial delay to test impact of computation time on control performance
+        # time.sleep(0.020)  # 20ms delay
 
         self.waypoint_safety_counter += 1
         if self.waypoint_safety_counter >= self.rate * 5:  # 5 second timeout
@@ -445,13 +468,8 @@ class ControllerManager(Node):
 
             self.waypoint_safety_counter = 0
 
-    def car_state_cb(self, msg: Odometry):
-        """Process odometry message - velocity and TF-based position."""
-        # Get velocity from odom message
-        with self.state_lock:
-            self.speed_now = msg.twist.twist.linear.x
-
-        # Get position and orientation from TF (map_frame -> base_link_frame)
+    def update_position_from_tf(self) -> bool:
+        """Update position from TF transform. Returns True on success."""
         try:
             transform = self.tf_buffer.lookup_transform(
                 self.map_frame,
@@ -473,11 +491,20 @@ class ControllerManager(Node):
             with self.state_lock:
                 self.position_in_map = np.array([x, y, yaw])
 
+            return True
+
         except TransformException as ex:
             self.get_logger().warn(
                 f"Could not get {self.map_frame}->{self.base_link_frame} transform: {ex}",
-                throttle_duration_sec=1.0
+                throttle_duration_sec=2.0
             )
+            return False
+
+    def car_state_cb(self, msg: Odometry):
+        """Process odometry message - only update velocity."""
+        # Get velocity from odom message (position updated from TF in control loop)
+        with self.state_lock:
+            self.speed_now = msg.twist.twist.linear.x
 
     def car_state_frenet_cb(self, msg: Odometry):
         """Process Frenet frame odometry."""
@@ -494,7 +521,6 @@ class ControllerManager(Node):
         acc_x = msg.linear_acceleration.x
 
         # Maintain a sliding window of the most recent 10 acceleration values
-        # Matches initialization size of acc_now buffer
         window_size = 10
 
         with self.state_lock:

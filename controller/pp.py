@@ -45,6 +45,8 @@ class PP_Controller:
         end_scale_speed: float,
         downscale_factor: float,
         speed_lookahead_for_steer: float,
+        diff_threshold: float,
+        deacc_gain: float,
         LUT_path: str,
         logger_info: Optional[Callable[[str], None]] = None,
         logger_warn: Optional[Callable[[str], None]] = None
@@ -82,6 +84,8 @@ class PP_Controller:
         self.end_scale_speed = end_scale_speed
         self.downscale_factor = downscale_factor
         self.speed_lookahead_for_steer = speed_lookahead_for_steer
+        self.diff_threshold = diff_threshold
+        self.deacc_gain = deacc_gain
         self.LUT_path = LUT_path
 
         # Logging callbacks
@@ -200,6 +204,24 @@ class PP_Controller:
         if not np.isfinite(L1_point).all():
             raise RuntimeError("L1_point is invalid")
 
+        # Startup blending: if the difference between current speed and
+        # the nearest waypoint's speed profile is >= diff_threshold (m/s), treat as initial rollout
+        # and blend the final commanded speed with current speed to avoid aggressive jumps.
+        if self.idx_nearest_waypoint is not None:
+            nearest_idx = int(self.idx_nearest_waypoint)
+            if nearest_idx >= 0 and nearest_idx < self.waypoint_array_in_map.shape[0]:
+                profile_speed = self.waypoint_array_in_map[nearest_idx, 2]
+                diff = abs(profile_speed - self.speed_now)
+                if diff >= self.diff_threshold:  # configurable threshold
+                    prev_speed = speed
+                    speed = self.deacc_gain * (speed + self.speed_now)  # configurable blending gain
+                    if self.logger_info:
+                        self.logger_info(
+                            f"[PP Controller] Startup blend active: |profile - v| = {diff:.3f} m/s "
+                            f"(threshold={self.diff_threshold:.1f}), gain={self.deacc_gain:.2f}, "
+                            f"speed {prev_speed:.2f} -> {speed:.2f}"
+                        )
+
         # Calculate steering angle
         steering_angle = self.calc_steering_angle(L1_point, L1_distance, yaw, lat_e_norm, v)
 
@@ -274,7 +296,7 @@ class PP_Controller:
                 self.logger_warn("[PP Controller] L1_distance is 0, steering_angle is set to 0")
             steering_angle = 0.0
         else:
-            wheelbase = 0.324  # meters
+            wheelbase = 0.33  # meters
             steering_angle = np.arctan((2.0 * wheelbase * np.sin(eta)) / L1_distance)
 
         # Apply speed-based downscaling
@@ -337,15 +359,16 @@ class PP_Controller:
         if self.idx_nearest_waypoint is None:
             self.idx_nearest_waypoint = 0
 
-        # Calculate mean curvature from nearest waypoint forward
+        # Calculate mean curvature from nearest waypoint forward (동일: MAP과 완전히 일치)
         if (self.waypoint_array_in_map.shape[0] - self.idx_nearest_waypoint) > 2:
+            lookahead_idx = int(np.floor(self.speed_now * self.speed_lookahead * 1.25 * 10.0))
+            end_idx = min(
+                self.idx_nearest_waypoint + lookahead_idx,
+                self.waypoint_array_in_map.shape[0]
+            )
+            
             self.curvature_waypoints = np.mean(
-                np.abs(
-                    self.waypoint_array_in_map[
-                        self.idx_nearest_waypoint:,
-                        5
-                    ]
-                )
+                np.abs(self.waypoint_array_in_map[self.idx_nearest_waypoint:end_idx, 5])
             )
 
         # Calculate adaptive L1 distance
@@ -418,9 +441,9 @@ class PP_Controller:
         """
         mean_acc = np.mean(self.acc_now) if len(self.acc_now) > 0 else 0.0
         
-        if mean_acc >= 1.0:
+        if mean_acc >= 0.8:
             return steer * self.acc_scaler_for_steer
-        elif mean_acc <= -1.0:
+        elif mean_acc <= -0.8:
             return steer * self.dec_scaler_for_steer
         
         return steer

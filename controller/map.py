@@ -190,17 +190,7 @@ class MAP_Controller:
         # Calculate lateral error normalization
         lat_e_norm, lateral_error = self.calc_lateral_error_norm()
 
-        # Calculate L1 point
-        L1_point, L1_distance = self.calc_L1_point(lateral_error)
-
-        # Check L1 point validity
-        if not np.isfinite(L1_point).all():
-            raise RuntimeError("L1_point is invalid")
-
-        # Calculate steering angle
-        steering_angle = self.calc_steering_angle(L1_point, L1_distance, yaw, lat_e_norm, v)
-
-        # Calculate speed command
+        # Calculate speed command (BEFORE L1 point calculation - matches C++ order)
         self.speed_command = self.calc_speed_command(v, lat_e_norm)
 
         speed = 0.0
@@ -215,6 +205,13 @@ class MAP_Controller:
             jerk = 0.0
             if self.logger_warn:
                 self.logger_warn("[MAP Controller] speed was none")
+
+        # Calculate L1 point
+        L1_point, L1_distance = self.calc_L1_point(lateral_error)
+
+        # Check L1 point validity
+        if not np.isfinite(L1_point).all():
+            raise RuntimeError("L1_point is invalid")
 
         # Startup blending: if the difference between current speed and
         # the nearest waypoint's speed profile is >= diff_threshold, treat as initial rollout
@@ -235,6 +232,9 @@ class MAP_Controller:
                             f"(threshold={self.diff_threshold:.2f}), gain={self.deacc_gain:.2f}, "
                             f"speed {prev_speed:.2f} -> {speed:.2f}"
                         )
+
+        # Calculate steering angle (AFTER speed calculation and blending - matches C++ order)
+        steering_angle = self.calc_steering_angle(L1_point, L1_distance, yaw, lat_e_norm, v)
 
         # Build result
         result = MAPResult(
