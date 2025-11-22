@@ -1,6 +1,6 @@
 """
-Unified Controller Manager for MAP and PP controllers.
-ROS2 node that manages both control algorithms with mode parameter selection.
+Unified Controller Manager for MAP, PP, and AUG controllers.
+ROS2 node that manages all control algorithms with mode parameter selection.
 """
 
 import rclpy
@@ -30,12 +30,13 @@ from geometry_msgs.msg import TransformStamped
 # Controller implementations
 from controller.map import MAP_Controller
 from controller.pp import PP_Controller
+from controller.aug import AUG_Controller
 from controller.utils.parameter_handler import ParameterEventHandler
 
 
 class ControllerManager(Node):
     """
-    Unified controller manager node supporting MAP and PP control modes.
+    Unified controller manager node supporting MAP, PP, and AUG control modes.
     Handles all ROS2 subscriptions, TF transforms, and control loop orchestration.
     """
 
@@ -103,6 +104,10 @@ class ControllerManager(Node):
                 self.get_logger().info("Initializing PP controller")
                 self.init_pp_controller()
                 self.controller = self.pp_controller
+            elif self.mode == "AUG":
+                self.get_logger().info("Initializing AUG controller")
+                self.init_aug_controller()
+                self.controller = self.aug_controller
             else:
                 self.get_logger().error(f"Invalid mode: {self.mode}")
                 return False
@@ -246,6 +251,57 @@ class ControllerManager(Node):
 
         self.get_logger().info("✓ PP controller initialized successfully")
 
+    def init_aug_controller(self):
+        """Initialize AUG controller with parameters from YAML."""
+        self.get_logger().info("Initializing AUG controller...")
+
+        # Load AUG parameters from YAML
+        aug_params_path = self.get_parameter('aug_params_path').value
+        self.get_logger().info(f"Loading AUG parameters from: {aug_params_path}")
+        self.declare_aug_dynamic_parameters_from_yaml(aug_params_path)
+
+        # Initialize acceleration rolling buffer
+        self.acc_now = np.zeros(10)
+        self.get_logger().debug("Acceleration buffer initialized")
+
+        # Create AUG controller with logging callbacks
+        def log_info(msg: str):
+            self.get_logger().info(f"[AUG] {msg}")
+
+        def log_warn(msg: str):
+            self.get_logger().warn(f"[AUG] {msg}")
+
+        self.aug_controller = AUG_Controller(
+            self.get_parameter('t_clip_min').value,
+            self.get_parameter('t_clip_max').value,
+            self.get_parameter('m_l1').value,
+            self.get_parameter('q_l1').value,
+            self.get_parameter('speed_lookahead').value,
+            self.get_parameter('lat_err_coeff').value,
+            self.get_parameter('acc_scaler_for_steer').value,
+            self.get_parameter('dec_scaler_for_steer').value,
+            self.get_parameter('start_scale_speed').value,
+            self.get_parameter('end_scale_speed').value,
+            self.get_parameter('downscale_factor').value,
+            self.get_parameter('speed_lookahead_for_steer').value,
+            self.get_parameter('diff_threshold').value,
+            self.get_parameter('deacc_gain').value,
+            self.LUT_path,
+            self.get_parameter('Cf').value,
+            self.get_parameter('Cr').value,
+            self.get_parameter('L').value,
+            self.get_parameter('lf').value,
+            self.get_parameter('lr').value,
+            self.get_parameter('m').value,
+            self.get_parameter('mode').value,
+            self.get_parameter('lat_th_f').value,
+            self.get_parameter('lat_th_r').value,
+            log_info,
+            log_warn
+        )
+
+        self.get_logger().info("✓ AUG controller initialized successfully")
+
     def declare_l1_dynamic_parameters_from_yaml(self, yaml_path: str):
         """Declare dynamic parameters from L1 YAML configuration."""
         with open(yaml_path, 'r') as f:
@@ -320,6 +376,59 @@ class ControllerManager(Node):
         declare_double('diff_threshold', params['diff_threshold'], 0.0, 20.0, 0.1)
         declare_double('deacc_gain', params['deacc_gain'], 0.0, 1.0, 0.01)
 
+    def declare_aug_dynamic_parameters_from_yaml(self, yaml_path: str):
+        """Declare dynamic parameters from AUG YAML configuration."""
+        with open(yaml_path, 'r') as f:
+            root = yaml.safe_load(f)
+
+        if 'crazy_controller' not in root or 'ros__parameters' not in root['crazy_controller']:
+            raise RuntimeError("Invalid aug_params YAML: missing crazy_controller.ros__parameters")
+
+        params = root['crazy_controller']['ros__parameters']
+
+        def declare_double(name: str, default: float, range_from: float, range_to: float, step: float):
+            descriptor = ParameterDescriptor(
+                type=ParameterType.PARAMETER_DOUBLE,
+                floating_point_range=[FloatingPointRange(
+                    from_value=range_from,
+                    to_value=range_to,
+                    step=step
+                )]
+            )
+            self.declare_parameter(name, default, descriptor)
+
+        # Declare dynamic parameters
+        declare_double('t_clip_min', params['t_clip_min'], 0.0, 1.5, 0.01)
+        declare_double('t_clip_max', params['t_clip_max'], 0.0, 10.0, 0.01)
+        declare_double('m_l1', params['m_l1'], 0.0, 1.0, 0.001)
+        declare_double('q_l1', params['q_l1'], -1.0, 1.0, 0.001)
+        declare_double('speed_lookahead', params['speed_lookahead'], 0.0, 1.0, 0.01)
+        declare_double('lat_err_coeff', params['lat_err_coeff'], 0.0, 1.0, 0.01)
+        declare_double('acc_scaler_for_steer', params['acc_scaler_for_steer'], 0.0, 1.5, 0.01)
+        declare_double('dec_scaler_for_steer', params['dec_scaler_for_steer'], 0.0, 1.5, 0.01)
+        declare_double('start_scale_speed', params['start_scale_speed'], 0.0, 10.0, 0.01)
+        declare_double('end_scale_speed', params['end_scale_speed'], 0.0, 10.0, 0.01)
+        declare_double('downscale_factor', params['downscale_factor'], 0.0, 0.5, 0.01)
+        declare_double('speed_lookahead_for_steer', params['speed_lookahead_for_steer'], 0.0, 0.2, 0.01)
+        declare_double('diff_threshold', params['diff_threshold'], 0.0, 20.0, 0.1)
+        declare_double('deacc_gain', params['deacc_gain'], 0.0, 1.0, 0.01)
+
+        # Declare vehicle parameters
+        declare_double('Cf', params['Cf'], 0.0, 200.0, 0.001)
+        declare_double('Cr', params['Cr'], 0.0, 200.0, 0.001)
+        declare_double('L', params['L'], 0.0, 1.0, 0.0001)
+        declare_double('lf', params['lf'], 0.0, 1.0, 0.00001)
+        declare_double('lr', params['lr'], 0.0, 1.0, 0.00001)
+        declare_double('m', params['m'], 0.0, 20.0, 0.01)
+
+        # Declare mode parameter (string)
+        mode_descriptor = ParameterDescriptor(type=ParameterType.PARAMETER_STRING)
+        self.declare_parameter('mode', params['mode'], mode_descriptor)
+
+        # Declare lateral acceleration threshold parameters
+        declare_double('lat_th_f', params['lat_th_f'], 0.0, 20.0, 0.1)
+        declare_double('lat_th_r', params['lat_th_r'], 0.0, 20.0, 0.1)
+
     def wait_for_messages(self):
         """Wait for all required messages before starting control loop."""
         self.get_logger().info("Controller waiting for messages...")
@@ -373,6 +482,8 @@ class ControllerManager(Node):
                 speed, steer = self.map_cycle()
             elif self.mode == "PP":
                 speed, steer = self.pp_cycle()
+            elif self.mode == "AUG":
+                speed, steer = self.aug_cycle()
             else:
                 return
 
@@ -424,6 +535,30 @@ class ControllerManager(Node):
         
         with self.state_lock:
             res = self.pp_controller.main_loop(
+                self.position_in_map,
+                self.waypoint_array_in_map,
+                self.speed_now,
+                np.array([self.position_in_map_frenet[0], self.position_in_map_frenet[1]]),
+                self.acc_now
+            )
+
+        # Artificial delay to test impact of computation time on control performance
+        # time.sleep(0.020)  # 20ms delay
+
+        self.waypoint_safety_counter += 1
+        if self.waypoint_safety_counter >= self.rate * 5:  # 5 second timeout
+            self.get_logger().warn("No fresh local waypoints. STOPPING!!")
+            res.speed = 0.0
+            res.steering_angle = 0.0
+
+        return res.speed, res.steering_angle
+
+    def aug_cycle(self) -> Tuple[float, float]:
+        """Execute AUG control cycle."""
+        # import time
+
+        with self.state_lock:
+            res = self.aug_controller.main_loop(
                 self.position_in_map,
                 self.waypoint_array_in_map,
                 self.speed_now,
@@ -570,8 +705,29 @@ class ControllerManager(Node):
             self.pp_controller.set_end_scale_speed(self.get_parameter('end_scale_speed').value)
             self.pp_controller.set_downscale_factor(self.get_parameter('downscale_factor').value)
             self.pp_controller.set_speed_lookahead_for_steer(self.get_parameter('speed_lookahead_for_steer').value)
-            
+
             self.get_logger().info("Updated PP parameters")
+
+        elif self.mode == "AUG" and hasattr(self, 'aug_controller'):
+            # Update AUG controller parameters
+            self.aug_controller.set_t_clip_min(self.get_parameter('t_clip_min').value)
+            self.aug_controller.set_t_clip_max(self.get_parameter('t_clip_max').value)
+            self.aug_controller.set_m_l1(self.get_parameter('m_l1').value)
+            self.aug_controller.set_q_l1(self.get_parameter('q_l1').value)
+            self.aug_controller.set_speed_lookahead(self.get_parameter('speed_lookahead').value)
+            self.aug_controller.set_lat_err_coeff(self.get_parameter('lat_err_coeff').value)
+            self.aug_controller.set_acc_scaler_for_steer(self.get_parameter('acc_scaler_for_steer').value)
+            self.aug_controller.set_dec_scaler_for_steer(self.get_parameter('dec_scaler_for_steer').value)
+            self.aug_controller.set_start_scale_speed(self.get_parameter('start_scale_speed').value)
+            self.aug_controller.set_end_scale_speed(self.get_parameter('end_scale_speed').value)
+            self.aug_controller.set_downscale_factor(self.get_parameter('downscale_factor').value)
+            self.aug_controller.set_speed_lookahead_for_steer(self.get_parameter('speed_lookahead_for_steer').value)
+            self.aug_controller.set_lat_th_f(self.get_parameter('lat_th_f').value)
+            self.aug_controller.set_lat_th_r(self.get_parameter('lat_th_r').value)
+            self.aug_controller.set_Cf(self.get_parameter('Cf').value)
+            self.aug_controller.set_Cr(self.get_parameter('Cr').value)
+
+            self.get_logger().info("Updated AUG parameters")
 
     # ========== Emergency Stop Functions ==========
 

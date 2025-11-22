@@ -16,7 +16,7 @@ def launch_setup(context, *args, **kwargs):
     # Get package share directory
     controller_share = FindPackageShare('controller').find('controller')
     
-    # Determine controller type (MAP or PP)
+    # Determine controller type (MAP, PP, or AUG)
     controller_type = mode.upper()
     
     # Determine environment (sim or real)
@@ -63,11 +63,24 @@ def launch_setup(context, *args, **kwargs):
                 'config',
                 'pp_params.yaml'
             ]).perform(context)
+    elif controller_type == 'AUG':
+        if is_sim:
+            params_file = PathJoinSubstitution([
+                controller_share,
+                'config',
+                'aug_params_sim.yaml'
+            ]).perform(context)
+        else:
+            params_file = PathJoinSubstitution([
+                controller_share,
+                'config',
+                'aug_params.yaml'
+            ]).perform(context)
     else:
-        raise ValueError(f"Invalid mode: {controller_type}. Must be 'MAP' or 'PP'")
+        raise ValueError(f"Invalid mode: {controller_type}. Must be 'MAP', 'PP', or 'AUG'")
     
     # Determine lookup table based on environment (only for MAP controller)
-    # PP controller does not use lookup table, it uses geometric formula
+    # PP and AUG controllers do not use lookup table, they use geometric formula
     if controller_type == 'MAP':
         if is_sim:
             lookup_table_file = PathJoinSubstitution([
@@ -82,7 +95,7 @@ def launch_setup(context, *args, **kwargs):
                 'NUC4_pacejka_lookup_table.csv'
             ]).perform(context)
     else:
-        # PP controller doesn't need lookup table, but we provide a dummy path
+        # PP and AUG controllers don't need lookup table, but we provide a dummy path
         lookup_table_file = PathJoinSubstitution([
             controller_share,
             'config',
@@ -102,6 +115,7 @@ def launch_setup(context, *args, **kwargs):
                 'lookup_table_path': lookup_table_file,
                 'l1_params_path': params_file if controller_type == 'MAP' else '',
                 'pp_params_path': params_file if controller_type == 'PP' else '',
+                'aug_params_path': params_file if controller_type == 'AUG' else '',
                 'map_frame': map_frame_param,
                 'base_link_frame': base_link_frame_param,
                 'use_sim_time': False,  # Use wall clock time instead of simulation time
@@ -126,7 +140,7 @@ def generate_launch_description():
     mode_arg = DeclareLaunchArgument(
         'mode',
         default_value='MAP',
-        description='Controller mode: MAP or PP'
+        description='Controller mode: MAP, PP, or AUG'
     )
     
     env_arg = DeclareLaunchArgument(

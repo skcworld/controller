@@ -1,17 +1,16 @@
 """
-MAP (Model-and Acceleration-based Pursuit) Controller implementation.
+AUG Controller implementation.
 논문(알고리즘 자체의 비교)를 위해서, 제어 성능을 높이기 위해 휴리스틱하게 추가된 알고리즘들을 전부 주석처리함. 알고리즘 자체의 비교만 가능하게 함.
 """
 
 import numpy as np
 from typing import Tuple, Optional, Callable
 from dataclasses import dataclass
-from controller.utils.steering_lookup import SteeringLookup
 
 
 @dataclass
-class MAPResult:
-    """Result structure for MAP controller output."""
+class AUGResult:
+    """Result structure for AUG controller output."""
     speed: float
     acceleration: float
     jerk: float
@@ -26,10 +25,10 @@ def clamp(value: float, min_val: float, max_val: float) -> float:
     return max(min_val, min(max_val, value))
 
 
-class MAP_Controller:
+class AUG_Controller:
     """
-    Model-Adaptive Pursuit controller with L1 adaptive lookahead distance.
-    Uses steering lookup table, acceleration scaling, and lateral error compensation.
+    AUG controller with adaptive lookahead distance.
+    Does not use steering lookup table - uses geometric AUG formula.
     """
 
     def __init__(
@@ -49,12 +48,21 @@ class MAP_Controller:
         diff_threshold: float,
         deacc_gain: float,
         LUT_path: str,
+        Cf: float,
+        Cr: float,
+        L: float,
+        lf: float,
+        lr: float,
+        m: float,
+        mode: str,
+        lat_th_f: float,
+        lat_th_r: float,
         logger_info: Optional[Callable[[str], None]] = None,
         logger_warn: Optional[Callable[[str], None]] = None
     ):
         """
-        Initialize MAP controller.
-        
+        Initialize AUG controller.
+
         Args:
             t_clip_min: Minimum L1 lookahead distance [m]
             t_clip_max: Maximum L1 lookahead distance [m]
@@ -67,10 +75,17 @@ class MAP_Controller:
             start_scale_speed: Speed at which steering downscaling begins [m/s]
             end_scale_speed: Speed at which steering downscaling reaches maximum [m/s]
             downscale_factor: Maximum steering downscale factor
-            speed_lookahead_for_steer: Lookahead time for steering lookup [s]
-            diff_threshold: Speed difference threshold for startup blending [m/s]
-            deacc_gain: Blending gain for startup deacceleration
-            LUT_path: Path to steering lookup table CSV
+            speed_lookahead_for_steer: Lookahead time for steering calculation [s]
+            LUT_path: Path to steering lookup table CSV (not used in AUG)
+            Cf: Front tire cornering stiffness [N/rad]
+            Cr: Rear tire cornering stiffness [N/rad]
+            L: Wheelbase [m]
+            lf: Distance from CoG to front axle [m]
+            lr: Distance from CoG to rear axle [m]
+            m: Vehicle mass [kg]
+            mode: Operating mode ('sim' or 'real')
+            lat_th_f: Lateral acceleration threshold for front tire [m/s^2] (real mode only)
+            lat_th_r: Lateral acceleration threshold for rear tire [m/s^2] (real mode only)
             logger_info: Optional info logging callback
             logger_warn: Optional warning logging callback
         """
@@ -91,6 +106,19 @@ class MAP_Controller:
         self.deacc_gain = deacc_gain
         self.LUT_path = LUT_path
 
+        # Vehicle parameters
+        self.Cf = Cf
+        self.Cr = Cr
+        self.L = L
+        self.lf = lf
+        self.lr = lr
+        self.m = m
+
+        # Mode and tire model parameters
+        self.mode = mode
+        self.lat_th_f = lat_th_f
+        self.lat_th_r = lat_th_r
+
         # Logging callbacks
         self.logger_info = logger_info
         self.logger_warn = logger_warn
@@ -106,11 +134,11 @@ class MAP_Controller:
         self.curr_steering_angle: float = 0.0
         self.curvature_waypoints: float = 0.0
 
-        # Startup blending flag
+        # Startup flag
         self.first_steering_calculation = True
 
-        # Initialize steering lookup table
-        self.steering_lookup = SteeringLookup(LUT_path)
+        # Note: AUG does not use steering lookup table
+        # LUT_path is accepted for interface compatibility but not used
 
     # Parameter setters for dynamic reconfiguration
     def set_t_clip_min(self, value: float) -> None:
@@ -149,11 +177,17 @@ class MAP_Controller:
     def set_speed_lookahead_for_steer(self, value: float) -> None:
         self.speed_lookahead_for_steer = value
 
-    def set_diff_threshold(self, value: float) -> None:
-        self.diff_threshold = value
+    def set_lat_th_f(self, value: float) -> None:
+        self.lat_th_f = value
 
-    def set_deacc_gain(self, value: float) -> None:
-        self.deacc_gain = value
+    def set_lat_th_r(self, value: float) -> None:
+        self.lat_th_r = value
+
+    def set_Cf(self, value: float) -> None:
+        self.Cf = value
+
+    def set_Cr(self, value: float) -> None:
+        self.Cr = value
 
     def main_loop(
         self,
@@ -162,19 +196,19 @@ class MAP_Controller:
         speed_now: float,
         position_in_map_frenet: np.ndarray,
         acc_now: np.ndarray
-    ) -> MAPResult:
+    ) -> AUGResult:
         """
         Main control loop - computes steering and speed commands.
-        
+
         Args:
             position_in_map: Vehicle pose [x, y, yaw] in map frame
             waypoint_array_in_map: Waypoint matrix [N x 8]: [x, y, speed, ratio, s, kappa, psi, ax]
             speed_now: Current vehicle speed [m/s]
             position_in_map_frenet: Frenet coordinates [s, d]
             acc_now: Acceleration buffer (10 samples) [m/s^2]
-        
+
         Returns:
-            MAPResult with speed, steering, and debug info
+            AUGResult with speed, steering, and debug info
         """
         # Update state
         self.position_in_map = position_in_map
@@ -190,7 +224,7 @@ class MAP_Controller:
         # Calculate lateral error normalization
         lat_e_norm, lateral_error = self.calc_lateral_error_norm()
 
-        # Calculate speed command (BEFORE L1 point calculation - matches C++ order)
+        # Calculate speed command
         self.speed_command = self.calc_speed_command(v, lat_e_norm)
 
         speed = 0.0
@@ -204,7 +238,7 @@ class MAP_Controller:
             acceleration = 0.0
             jerk = 0.0
             if self.logger_warn:
-                self.logger_warn("[MAP Controller] speed was none")
+                self.logger_warn("[AUG Controller] speed was none")
 
         # Calculate L1 point
         L1_point, L1_distance = self.calc_L1_point(lateral_error)
@@ -214,30 +248,28 @@ class MAP_Controller:
             raise RuntimeError("L1_point is invalid")
 
         # Startup blending: if the difference between current speed and
-        # the nearest waypoint's speed profile is >= diff_threshold, treat as initial rollout
+        # the nearest waypoint's speed profile is >= diff_threshold (m/s), treat as initial rollout
         # and blend the final commanded speed with current speed to avoid aggressive jumps.
-        # Matches C++ lines 352-370
         # if self.idx_nearest_waypoint is not None:
-        #     nearest_idx = self.idx_nearest_waypoint
-        #     if 0 <= nearest_idx < self.waypoint_array_in_map.shape[0]:
+        #     nearest_idx = int(self.idx_nearest_waypoint)
+        #     if nearest_idx >= 0 and nearest_idx < self.waypoint_array_in_map.shape[0]:
         #         profile_speed = self.waypoint_array_in_map[nearest_idx, 2]
         #         diff = abs(profile_speed - self.speed_now)
-        #         if diff >= self.diff_threshold:
+        #         if diff >= self.diff_threshold:  # configurable threshold
         #             prev_speed = speed
-        #             # C++ formula: speed = deacc_gain * (speed + speed_now)
-        #             speed = self.deacc_gain * (speed + self.speed_now)
+        #             speed = self.deacc_gain * (speed + self.speed_now)  # configurable blending gain
         #             if self.logger_info:
         #                 self.logger_info(
-        #                     f"[MAP Controller] Startup blend active: |profile - v| = {diff:.2f} m/s "
-        #                     f"(threshold={self.diff_threshold:.2f}), gain={self.deacc_gain:.2f}, "
+        #                     f"[AUG Controller] Startup blend active: |profile - v| = {diff:.3f} m/s "
+        #                     f"(threshold={self.diff_threshold:.1f}), gain={self.deacc_gain:.2f}, "
         #                     f"speed {prev_speed:.2f} -> {speed:.2f}"
         #                 )
 
-        # Calculate steering angle (AFTER speed calculation and blending - matches C++ order)
+        # Calculate steering angle
         steering_angle = self.calc_steering_angle(L1_point, L1_distance, yaw, lat_e_norm, v)
 
         # Build result
-        result = MAPResult(
+        result = AUGResult(
             speed=speed,
             acceleration=acceleration,
             jerk=jerk,
@@ -258,22 +290,21 @@ class MAP_Controller:
         v: np.ndarray
     ) -> float:
         """
-        Calculate steering angle using lookup table and multi-stage scaling.
-        
-        Pipeline: lookup(lat_acc, speed) → speed_steer_scaling → acc_scaling
-                 → speed multiplier (1.0-1.25) → rate limiting (0.4) → clamp(±0.45)
-        
+        Calculate steering angle using AUG geometric formula.
+
+        Formula: steering_angle = arctan((2 * wheelbase * sin(eta)) / L1_distance)
+
         Args:
             L1_point: Target L1 point [x, y] in map frame
             L1_distance: Distance to L1 point [m]
             yaw: Vehicle yaw angle [rad]
             lat_e_norm: Normalized lateral error [0-0.5]
             v: Velocity vector [vx, vy] [m/s]
-        
+
         Returns:
             Steering angle [rad]
         """
-        # Calculate lookahead position for steering lookup
+        # Calculate lookahead position for speed adjustment
         adv_ts_st = self.speed_lookahead_for_steer
         la_position = np.array([
             self.position_in_map[0] + v[0] * adv_ts_st,
@@ -283,31 +314,49 @@ class MAP_Controller:
         # Find nearest waypoint to lookahead position
         idx_la_steer = self.nearest_waypoint(la_position, self.waypoint_array_in_map[:, :2])
 
-        # Get speed at lookahead position for lookup table
+        # Get speed at lookahead position
         speed_la_for_lu = self.waypoint_array_in_map[idx_la_steer, 2]
         # speed_for_lu = self.speed_adjust_lat_err(speed_la_for_lu, lat_e_norm)
 
-        # Calculate L1 geometry
+        # Calculate L1 vector
         L1_vector = L1_point - self.position_in_map[:2]
-        
+
+        # Calculate eta (angle between vehicle heading and L1 vector)
+        eta = 0.0
         if np.linalg.norm(L1_vector) == 0.0:
             if self.logger_warn:
-                self.logger_warn("[MAP Controller] norm of L1 vector was 0, lateral_acc set to 0")
-            lateral_acc = 0.0
+                self.logger_warn("[AUG Controller] norm of L1 vector was 0, eta is set to 0")
+            eta = 0.0
         else:
             nvec = np.array([-np.sin(yaw), np.cos(yaw)])
             sin_eta = np.dot(nvec, L1_vector) / np.linalg.norm(L1_vector)
-            sin_eta = clamp(sin_eta, -1.0, 1.0)
             eta = np.arcsin(sin_eta)
-            # CRITICAL: Factor of 2 is required for correct lateral acceleration
-            # C++ 수정 1: speed_for_lu를 speed_now로 변경 (2025.10.31 새벽에 수정함)
-            lateral_acc = 2.0 * (self.speed_now ** 2) * np.sin(eta) / L1_distance
 
-        # Lookup steering angle from table
-        # C++ 수정 2: speed_for_lu를 speed_now로 변경 (2025.10.31 새벽에 수정함)
-        steering_angle = self.steering_lookup.get_steering_angle(self.speed_now, lateral_acc)
+        # AUG steering angle formula
+        steering_angle = 0.0
+        if L1_distance == 0.0:
+            if self.logger_warn:
+                self.logger_warn("[AUG Controller] L1_distance is 0, steering_angle is set to 0")
+            steering_angle = 0.0
+        elif self.speed_now < 0.1:
+            if self.logger_warn:
+                self.logger_warn("[AUG Controller] speed_now < 0.1 , steering_angle is set to 0")
+            steering_angle = 0.0
+        else:
+            lat_acc = 2.0 * (self.speed_now ** 2) * np.sin(eta) / L1_distance
+            g = 9.81
 
-        # C++ 수정 4: speed_steer_scaling에 speed_now 전달
+            # Calculate tire cornering stiffness based on mode
+            if self.mode == 'sim':
+                Cf = self.Cf
+                Cr = self.Cr
+            else:  # real mode
+                Cf = self.Cf / (1 + (lat_acc / self.lat_th_f) ** 3)
+                Cr = self.Cr / (1 + (lat_acc / self.lat_th_r) ** 3)
+
+            K_us = self.m * g * ((Cr * self.lr - Cf * self.lf) / (Cf * Cr * self.L))
+            steering_angle = lat_acc * (self.L / self.speed_now ** 2 + K_us)
+        # Apply speed-based downscaling
         # steering_angle = self.speed_steer_scaling(steering_angle, self.speed_now)
 
         # Apply acceleration-based scaling
@@ -321,7 +370,7 @@ class MAP_Controller:
         if self.first_steering_calculation:
             self.first_steering_calculation = False
             if self.logger_info:
-                self.logger_info("[MAP Controller] First steering calculation, skipping rate limiting")
+                self.logger_info("[AUG Controller] First steering calculation, skipping rate limiting")
         elif abs(steering_angle - self.curr_steering_angle) > threshold:
             if self.logger_info:
                 clamped_angle = clamp(
@@ -330,7 +379,7 @@ class MAP_Controller:
                     self.curr_steering_angle + threshold
                 )
                 self.logger_info(
-                    f"[MAP Controller] steering angle clipped: {steering_angle} -> {clamped_angle}"
+                    f"[AUG Controller] steering angle clipped: {steering_angle} -> {clamped_angle}"
                 )
             steering_angle = clamp(
                 steering_angle,
@@ -348,13 +397,13 @@ class MAP_Controller:
     def calc_L1_point(self, lateral_error: float) -> Tuple[np.ndarray, float]:
         """
         Calculate L1 target point with adaptive lookahead distance.
-        
+
         L1_distance = q_l1 + speed_now * m_l1
         Bounded by: max(t_clip_min, lateral_multiplier * lateral_error) to t_clip_max
-        
+
         Args:
             lateral_error: Absolute lateral error [m]
-        
+
         Returns:
             Tuple of (L1_point [x,y], L1_distance)
         """
@@ -367,14 +416,14 @@ class MAP_Controller:
         if self.idx_nearest_waypoint is None:
             self.idx_nearest_waypoint = 0
 
-        # Calculate mean curvature from nearest waypoint forward
+        # Calculate mean curvature from nearest waypoint forward (동일: MAP과 완전히 일치)
         if (self.waypoint_array_in_map.shape[0] - self.idx_nearest_waypoint) > 2:
             lookahead_idx = int(np.floor(self.speed_now * self.speed_lookahead * 1.25 * 10.0))
             end_idx = min(
                 self.idx_nearest_waypoint + lookahead_idx,
                 self.waypoint_array_in_map.shape[0]
             )
-            
+
             self.curvature_waypoints = np.mean(
                 np.abs(self.waypoint_array_in_map[self.idx_nearest_waypoint:end_idx, 5])
             )
@@ -389,7 +438,7 @@ class MAP_Controller:
 
         # if self.logger_info and lateral_error > 1.0:
         #     self.logger_info(
-        #         f"[MAP Controller] Large lateral error: {lateral_error}m, L1_distance: {L1_distance}m"
+        #         f"[AUG Controller] Large lateral error: {lateral_error}m, L1_distance: {L1_distance}m"
         #     )
 
         # Get waypoint at L1 distance ahead
@@ -404,12 +453,11 @@ class MAP_Controller:
     def calc_speed_command(self, v: np.ndarray, lat_e_norm: float) -> Optional[float]:
         """
         Calculate speed command with lateral error adjustment.
-        Matches C++ lines 518-534.
-        
+
         Args:
             v: Velocity vector [vx, vy] [m/s]
             lat_e_norm: Normalized lateral error [0-0.5]
-        
+
         Returns:
             Speed command [m/s] or None
         """
@@ -425,7 +473,7 @@ class MAP_Controller:
 
         # Get global speed from waypoint
         global_speed = self.waypoint_array_in_map[idx_la_position, 2]
-        
+
         # Adjust speed based on lateral error
         # global_speed = self.speed_adjust_lat_err(global_speed, lat_e_norm)
 
@@ -438,37 +486,36 @@ class MAP_Controller:
     # def acc_scaling(self, steer: float) -> float:
     #     """
     #     Scale steering based on mean acceleration state.
-    #     Matches C++ line 541-545.
-        
-    #     Accelerating (mean_acc >= 0.8): multiply by acc_scaler_for_steer
-    #     Decelerating (mean_acc <= -0.8): multiply by dec_scaler_for_steer
-        
+
+    #     Accelerating (mean_acc >= 1.0): multiply by acc_scaler_for_steer
+    #     Decelerating (mean_acc <= -1.0): multiply by dec_scaler_for_steer
+
     #     Args:
     #         steer: Input steering angle [rad]
-        
+
     #     Returns:
     #         Scaled steering angle [rad]
     #     """
     #     mean_acc = np.mean(self.acc_now) if len(self.acc_now) > 0 else 0.0
-        
+
     #     if mean_acc >= 0.8:
     #         return steer * self.acc_scaler_for_steer
     #     elif mean_acc <= -0.8:
     #         return steer * self.dec_scaler_for_steer
-        
+
     #     return steer
 
     # def speed_steer_scaling(self, steer: float, speed: float) -> float:
     #     """
     #     Apply speed-based downscaling to steering angle.
-        
-    #     Linear interpolation from 1.0 (at start_scale_speed) to 
+
+    #     Linear interpolation from 1.0 (at start_scale_speed) to
     #     (1.0 - downscale_factor) at end_scale_speed.
-        
+
     #     Args:
     #         steer: Input steering angle [rad]
     #         speed: Current speed [m/s]
-        
+
     #     Returns:
     #         Scaled steering angle [rad]
     #     """
@@ -480,9 +527,9 @@ class MAP_Controller:
     def calc_lateral_error_norm(self) -> Tuple[float, float]:
         """
         Calculate normalized lateral error.
-        
+
         Maps lateral error [0-2m] to normalized range [0-0.5].
-        
+
         Returns:
             Tuple of (normalized_error, absolute_error)
         """
@@ -499,13 +546,13 @@ class MAP_Controller:
     # def speed_adjust_lat_err(self, global_speed: float, lat_e_norm: float) -> float:
     #     """
     #     Adjust speed based on lateral error and curvature.
-        
+
     #     Speed reduction: speed *= (1 - lat_err_coeff + lat_err_coeff * exp(-lat_e_norm * curv))
-        
+
     #     Args:
     #         global_speed: Nominal speed [m/s]
     #         lat_e_norm: Normalized lateral error [0-0.5]
-        
+
     #     Returns:
     #         Adjusted speed [m/s]
     #     """
@@ -514,7 +561,7 @@ class MAP_Controller:
 
     #     # Normalize curvature to [0, 1]
     #     curv = clamp(2.0 * (self.curvature_waypoints / 0.8) - 2.0, 0.0, 1.0)
-        
+
     #     # Exponential speed reduction
     #     global_speed *= (1.0 - lat_e_coeff + lat_e_coeff * np.exp(-lat_e_norm * curv))
 
@@ -523,11 +570,11 @@ class MAP_Controller:
     def nearest_waypoint(self, position: np.ndarray, waypoints_xy: np.ndarray) -> int:
         """
         Find index of nearest waypoint to position.
-        
+
         Args:
             position: Query position [x, y]
             waypoints_xy: Waypoint array [N x 2]
-        
+
         Returns:
             Index of nearest waypoint
         """
@@ -549,14 +596,14 @@ class MAP_Controller:
     ) -> np.ndarray:
         """
         Get waypoint at specified distance ahead of car.
-        
+
         Assumes waypoints are spaced at 0.1m intervals.
-        
+
         Args:
             distance: Desired lookahead distance [m]
             waypoints_xy: Waypoint array [N x 2]
             idx_waypoint_behind_car: Index of nearest waypoint behind car
-        
+
         Returns:
             Waypoint position [x, y]
         """

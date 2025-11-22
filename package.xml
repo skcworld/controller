@@ -3,7 +3,7 @@
 <package format="3">
   <name>controller</name>
   <version>1.0.0</version>
-  <description>Python implementation of MAP and PP controllers for autonomous racing</description>
+  <description>Python implementation of MAP, PP, and AUG controllers for autonomous racing</description>
   <maintainer email="your_email@example.com">skcworld</maintainer>
   <license>MIT</license>
 

@@ -1,6 +1,6 @@
 """
 Pure Pursuit (PP) Controller implementation.
-Geometric path tracking with adaptive lookahead distance.
+논문(알고리즘 자체의 비교)를 위해서, 제어 성능을 높이기 위해 휴리스틱하게 추가된 알고리즘들을 전부 주석처리함. 알고리즘 자체의 비교만 가능하게 함.
 """
 
 import numpy as np
@@ -207,20 +207,20 @@ class PP_Controller:
         # Startup blending: if the difference between current speed and
         # the nearest waypoint's speed profile is >= diff_threshold (m/s), treat as initial rollout
         # and blend the final commanded speed with current speed to avoid aggressive jumps.
-        if self.idx_nearest_waypoint is not None:
-            nearest_idx = int(self.idx_nearest_waypoint)
-            if nearest_idx >= 0 and nearest_idx < self.waypoint_array_in_map.shape[0]:
-                profile_speed = self.waypoint_array_in_map[nearest_idx, 2]
-                diff = abs(profile_speed - self.speed_now)
-                if diff >= self.diff_threshold:  # configurable threshold
-                    prev_speed = speed
-                    speed = self.deacc_gain * (speed + self.speed_now)  # configurable blending gain
-                    if self.logger_info:
-                        self.logger_info(
-                            f"[PP Controller] Startup blend active: |profile - v| = {diff:.3f} m/s "
-                            f"(threshold={self.diff_threshold:.1f}), gain={self.deacc_gain:.2f}, "
-                            f"speed {prev_speed:.2f} -> {speed:.2f}"
-                        )
+        # if self.idx_nearest_waypoint is not None:
+        #     nearest_idx = int(self.idx_nearest_waypoint)
+        #     if nearest_idx >= 0 and nearest_idx < self.waypoint_array_in_map.shape[0]:
+        #         profile_speed = self.waypoint_array_in_map[nearest_idx, 2]
+        #         diff = abs(profile_speed - self.speed_now)
+        #         if diff >= self.diff_threshold:  # configurable threshold
+        #             prev_speed = speed
+        #             speed = self.deacc_gain * (speed + self.speed_now)  # configurable blending gain
+        #             if self.logger_info:
+        #                 self.logger_info(
+        #                     f"[PP Controller] Startup blend active: |profile - v| = {diff:.3f} m/s "
+        #                     f"(threshold={self.diff_threshold:.1f}), gain={self.deacc_gain:.2f}, "
+        #                     f"speed {prev_speed:.2f} -> {speed:.2f}"
+        #                 )
 
         # Calculate steering angle
         steering_angle = self.calc_steering_angle(L1_point, L1_distance, yaw, lat_e_norm, v)
@@ -273,7 +273,7 @@ class PP_Controller:
 
         # Get speed at lookahead position
         speed_la_for_lu = self.waypoint_array_in_map[idx_la_steer, 2]
-        speed_for_lu = self.speed_adjust_lat_err(speed_la_for_lu, lat_e_norm)
+        # speed_for_lu = self.speed_adjust_lat_err(speed_la_for_lu, lat_e_norm)
 
         # Calculate L1 vector
         L1_vector = L1_point - self.position_in_map[:2]
@@ -300,13 +300,13 @@ class PP_Controller:
             steering_angle = np.arctan((2.0 * wheelbase * np.sin(eta)) / L1_distance)
 
         # Apply speed-based downscaling
-        steering_angle = self.speed_steer_scaling(steering_angle, self.speed_now)
+        # steering_angle = self.speed_steer_scaling(steering_angle, self.speed_now)
 
         # Apply acceleration-based scaling
-        steering_angle = self.acc_scaling(steering_angle)
+        # steering_angle = self.acc_scaling(steering_angle)
 
         # Apply speed multiplier (1.0 to 1.25 based on speed)
-        steering_angle *= clamp(1.0 + (self.speed_now / 10.0), 1.0, 1.25)
+        # steering_angle *= clamp(1.0 + (self.speed_now / 10.0), 1.0, 1.25)
 
         # Apply rate limiting (0.4 rad/step) - skip on first calculation
         threshold = 0.4
@@ -375,14 +375,14 @@ class PP_Controller:
         L1_distance = self.q_l1 + self.speed_now * self.m_l1
 
         # Apply lateral error-based lower bound
-        lateral_multiplier = 2.0 if lateral_error > 1.0 else np.sqrt(2.0)
-        lower_bound = max(self.t_clip_min, lateral_multiplier * lateral_error)
-        L1_distance = clamp(L1_distance, lower_bound, self.t_clip_max)
+        # lateral_multiplier = 2.0 if lateral_error > 1.0 else np.sqrt(2.0)
+        # lower_bound = max(self.t_clip_min, lateral_multiplier * lateral_error)
+        # L1_distance = clamp(L1_distance, lower_bound, self.t_clip_max)
 
-        if self.logger_info and lateral_error > 1.0:
-            self.logger_info(
-                f"[PP Controller] Large lateral error: {lateral_error}m, L1_distance: {L1_distance}m"
-            )
+        # if self.logger_info and lateral_error > 1.0:
+        #     self.logger_info(
+        #         f"[PP Controller] Large lateral error: {lateral_error}m, L1_distance: {L1_distance}m"
+        #     )
 
         # Get waypoint at L1 distance ahead
         L1_point = self.waypoint_at_distance_before_car(
@@ -418,7 +418,7 @@ class PP_Controller:
         global_speed = self.waypoint_array_in_map[idx_la_position, 2]
         
         # Adjust speed based on lateral error
-        global_speed = self.speed_adjust_lat_err(global_speed, lat_e_norm)
+        # global_speed = self.speed_adjust_lat_err(global_speed, lat_e_norm)
 
         return global_speed
 
@@ -426,46 +426,46 @@ class PP_Controller:
         """Calculate Euclidean distance between two points."""
         return np.linalg.norm(p2 - p1)
 
-    def acc_scaling(self, steer: float) -> float:
-        """
-        Scale steering based on mean acceleration state.
+    # def acc_scaling(self, steer: float) -> float:
+    #     """
+    #     Scale steering based on mean acceleration state.
         
-        Accelerating (mean_acc >= 1.0): multiply by acc_scaler_for_steer
-        Decelerating (mean_acc <= -1.0): multiply by dec_scaler_for_steer
+    #     Accelerating (mean_acc >= 1.0): multiply by acc_scaler_for_steer
+    #     Decelerating (mean_acc <= -1.0): multiply by dec_scaler_for_steer
         
-        Args:
-            steer: Input steering angle [rad]
+    #     Args:
+    #         steer: Input steering angle [rad]
         
-        Returns:
-            Scaled steering angle [rad]
-        """
-        mean_acc = np.mean(self.acc_now) if len(self.acc_now) > 0 else 0.0
+    #     Returns:
+    #         Scaled steering angle [rad]
+    #     """
+    #     mean_acc = np.mean(self.acc_now) if len(self.acc_now) > 0 else 0.0
         
-        if mean_acc >= 0.8:
-            return steer * self.acc_scaler_for_steer
-        elif mean_acc <= -0.8:
-            return steer * self.dec_scaler_for_steer
+    #     if mean_acc >= 0.8:
+    #         return steer * self.acc_scaler_for_steer
+    #     elif mean_acc <= -0.8:
+    #         return steer * self.dec_scaler_for_steer
         
-        return steer
+    #     return steer
 
-    def speed_steer_scaling(self, steer: float, speed: float) -> float:
-        """
-        Apply speed-based downscaling to steering angle.
+    # def speed_steer_scaling(self, steer: float, speed: float) -> float:
+    #     """
+    #     Apply speed-based downscaling to steering angle.
         
-        Linear interpolation from 1.0 (at start_scale_speed) to 
-        (1.0 - downscale_factor) at end_scale_speed.
+    #     Linear interpolation from 1.0 (at start_scale_speed) to 
+    #     (1.0 - downscale_factor) at end_scale_speed.
         
-        Args:
-            steer: Input steering angle [rad]
-            speed: Current speed [m/s]
+    #     Args:
+    #         steer: Input steering angle [rad]
+    #         speed: Current speed [m/s]
         
-        Returns:
-            Scaled steering angle [rad]
-        """
-        speed_diff = max(0.1, self.end_scale_speed - self.start_scale_speed)
-        t = clamp((speed - self.start_scale_speed) / speed_diff, 0.0, 1.0)
-        factor = 1.0 - t * self.downscale_factor
-        return steer * factor
+    #     Returns:
+    #         Scaled steering angle [rad]
+    #     """
+    #     speed_diff = max(0.1, self.end_scale_speed - self.start_scale_speed)
+    #     t = clamp((speed - self.start_scale_speed) / speed_diff, 0.0, 1.0)
+    #     factor = 1.0 - t * self.downscale_factor
+    #     return steer * factor
 
     def calc_lateral_error_norm(self) -> Tuple[float, float]:
         """
@@ -486,29 +486,29 @@ class PP_Controller:
 
         return lat_e_norm, lateral_error
 
-    def speed_adjust_lat_err(self, global_speed: float, lat_e_norm: float) -> float:
-        """
-        Adjust speed based on lateral error and curvature.
+    # def speed_adjust_lat_err(self, global_speed: float, lat_e_norm: float) -> float:
+    #     """
+    #     Adjust speed based on lateral error and curvature.
         
-        Speed reduction: speed *= (1 - lat_err_coeff + lat_err_coeff * exp(-lat_e_norm * curv))
+    #     Speed reduction: speed *= (1 - lat_err_coeff + lat_err_coeff * exp(-lat_e_norm * curv))
         
-        Args:
-            global_speed: Nominal speed [m/s]
-            lat_e_norm: Normalized lateral error [0-0.5]
+    #     Args:
+    #         global_speed: Nominal speed [m/s]
+    #         lat_e_norm: Normalized lateral error [0-0.5]
         
-        Returns:
-            Adjusted speed [m/s]
-        """
-        lat_e_coeff = self.lat_err_coeff
-        lat_e_norm *= 2.0  # Scale to [0-1]
+    #     Returns:
+    #         Adjusted speed [m/s]
+    #     """
+    #     lat_e_coeff = self.lat_err_coeff
+    #     lat_e_norm *= 2.0  # Scale to [0-1]
 
-        # Normalize curvature to [0, 1]
-        curv = clamp(2.0 * (self.curvature_waypoints / 0.8) - 2.0, 0.0, 1.0)
+    #     # Normalize curvature to [0, 1]
+    #     curv = clamp(2.0 * (self.curvature_waypoints / 0.8) - 2.0, 0.0, 1.0)
         
-        # Exponential speed reduction
-        global_speed *= (1.0 - lat_e_coeff + lat_e_coeff * np.exp(-lat_e_norm * curv))
+    #     # Exponential speed reduction
+    #     global_speed *= (1.0 - lat_e_coeff + lat_e_coeff * np.exp(-lat_e_norm * curv))
 
-        return global_speed
+    #     return global_speed
 
     def nearest_waypoint(self, position: np.ndarray, waypoints_xy: np.ndarray) -> int:
         """

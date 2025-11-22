@@ -19,7 +19,7 @@ setup(
     zip_safe=True,
     maintainer='skcworld',
     maintainer_email='your_email@example.com',
-    description='Python implementation of MAP and PP controllers for autonomous racing',
+    description='Python implementation of MAP, PP, and AUG controllers for autonomous racing',
     license='MIT',
     tests_require=['pytest'],
     entry_points={
