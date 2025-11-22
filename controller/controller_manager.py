@@ -293,9 +293,8 @@ class ControllerManager(Node):
             self.get_parameter('lf').value,
             self.get_parameter('lr').value,
             self.get_parameter('m').value,
-            self.get_parameter('mode').value,
-            self.get_parameter('lat_th_f').value,
-            self.get_parameter('lat_th_r').value,
+            self.get_parameter('kf').value,
+            self.get_parameter('kr').value,
             log_info,
             log_warn
         )
@@ -421,13 +420,9 @@ class ControllerManager(Node):
         declare_double('lr', params['lr'], 0.0, 1.0, 0.00001)
         declare_double('m', params['m'], 0.0, 20.0, 0.01)
 
-        # Declare mode parameter (string)
-        mode_descriptor = ParameterDescriptor(type=ParameterType.PARAMETER_STRING)
-        self.declare_parameter('mode', params['mode'], mode_descriptor)
-
-        # Declare lateral acceleration threshold parameters
-        declare_double('lat_th_f', params['lat_th_f'], 0.0, 20.0, 0.1)
-        declare_double('lat_th_r', params['lat_th_r'], 0.0, 20.0, 0.1)
+        # Declare tire stiffness adjustment coefficients
+        declare_double('kf', params['kf'], 0.0, 0.01, 0.00001)
+        declare_double('kr', params['kr'], 0.0, 0.01, 0.00001)
 
     def wait_for_messages(self):
         """Wait for all required messages before starting control loop."""
@@ -722,8 +717,10 @@ class ControllerManager(Node):
             self.aug_controller.set_end_scale_speed(self.get_parameter('end_scale_speed').value)
             self.aug_controller.set_downscale_factor(self.get_parameter('downscale_factor').value)
             self.aug_controller.set_speed_lookahead_for_steer(self.get_parameter('speed_lookahead_for_steer').value)
-            self.aug_controller.set_lat_th_f(self.get_parameter('lat_th_f').value)
-            self.aug_controller.set_lat_th_r(self.get_parameter('lat_th_r').value)
+            self.aug_controller.set_diff_threshold(self.get_parameter('diff_threshold').value)
+            self.aug_controller.set_deacc_gain(self.get_parameter('deacc_gain').value)
+            self.aug_controller.set_kf(self.get_parameter('kf').value)
+            self.aug_controller.set_kr(self.get_parameter('kr').value)
             self.aug_controller.set_Cf(self.get_parameter('Cf').value)
             self.aug_controller.set_Cr(self.get_parameter('Cr').value)
 
@@ -769,7 +766,6 @@ def signal_handler(sig, frame):
     global g_node
     if g_node is not None:
         g_node.shutdown_handler()
-    rclpy.shutdown()
     sys.exit(0)
 
 

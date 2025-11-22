@@ -29,10 +29,8 @@ crazy_controller:
     L: 0.3302     # Wheelbase [m]
     lf: 0.15875   # Distance from CoG to front axle [m]
     lr: 0.17145   # Distance from CoG to rear axle [m]
-    m: 1.0       # Vehicle mass [kg] -> in f110_gym lateral vehicle dynamics, m is regarded as 1.0 kg.
+    m: 3.74       # Vehicle mass [kg]
 
-    mode: 'sim'   # Cornering stiffness calculation mode ('sim' or 'real'), Not meaning a whole environment
-
-    # Lateral acceleration thresholds for real mode
-    lat_th_f: 0.0  # Lateral acceleration threshold for front tire [m/s^2]
-    lat_th_r: 0.0  # Lateral acceleration threshold for rear tire [m/s^2]
+    # Tire stiffness adjustment coefficients
+    kf: 0.0  # Front tire stiffness coefficient
+    kr: 0.0  # Rear tire stiffness coefficient

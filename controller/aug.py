@@ -54,9 +54,8 @@ class AUG_Controller:
         lf: float,
         lr: float,
         m: float,
-        mode: str,
-        lat_th_f: float,
-        lat_th_r: float,
+        kf: float,
+        kr: float,
         logger_info: Optional[Callable[[str], None]] = None,
         logger_warn: Optional[Callable[[str], None]] = None
     ):
@@ -83,9 +82,8 @@ class AUG_Controller:
             lf: Distance from CoG to front axle [m]
             lr: Distance from CoG to rear axle [m]
             m: Vehicle mass [kg]
-            mode: Operating mode ('sim' or 'real')
-            lat_th_f: Lateral acceleration threshold for front tire [m/s^2] (real mode only)
-            lat_th_r: Lateral acceleration threshold for rear tire [m/s^2] (real mode only)
+            kf: Front tire stiffness coefficient
+            kr: Rear tire stiffness coefficient
             logger_info: Optional info logging callback
             logger_warn: Optional warning logging callback
         """
@@ -114,10 +112,9 @@ class AUG_Controller:
         self.lr = lr
         self.m = m
 
-        # Mode and tire model parameters
-        self.mode = mode
-        self.lat_th_f = lat_th_f
-        self.lat_th_r = lat_th_r
+        # Tire stiffness adjustment coefficients
+        self.kf = kf
+        self.kr = kr
 
         # Logging callbacks
         self.logger_info = logger_info
@@ -177,11 +174,17 @@ class AUG_Controller:
     def set_speed_lookahead_for_steer(self, value: float) -> None:
         self.speed_lookahead_for_steer = value
 
-    def set_lat_th_f(self, value: float) -> None:
-        self.lat_th_f = value
+    def set_diff_threshold(self, value: float) -> None:
+        self.diff_threshold = value
 
-    def set_lat_th_r(self, value: float) -> None:
-        self.lat_th_r = value
+    def set_deacc_gain(self, value: float) -> None:
+        self.deacc_gain = value
+
+    def set_kf(self, value: float) -> None:
+        self.kf = value
+
+    def set_kr(self, value: float) -> None:
+        self.kr = value
 
     def set_Cf(self, value: float) -> None:
         self.Cf = value
@@ -344,17 +347,12 @@ class AUG_Controller:
             steering_angle = 0.0
         else:
             lat_acc = 2.0 * (self.speed_now ** 2) * np.sin(eta) / L1_distance
-            g = 9.81
 
-            # Calculate tire cornering stiffness based on mode
-            if self.mode == 'sim':
-                Cf = self.Cf
-                Cr = self.Cr
-            else:  # real mode
-                Cf = self.Cf / (1 + (lat_acc / self.lat_th_f) ** 3)
-                Cr = self.Cr / (1 + (lat_acc / self.lat_th_r) ** 3)
+            # Calculate tire cornering stiffness with adjustment
+            Cf = self.Cf / (1 + self.kf * (np.abs(lat_acc) ** 3))
+            Cr = self.Cr / (1 + self.kr * (np.abs(lat_acc) ** 3))
 
-            K_us = self.m * g * ((Cr * self.lr - Cf * self.lf) / (Cf * Cr * self.L))
+            K_us = self.m * ((Cr * self.lr - Cf * self.lf) / (Cf * Cr * self.L))
             steering_angle = lat_acc * (self.L / self.speed_now ** 2 + K_us)
         # Apply speed-based downscaling
         # steering_angle = self.speed_steer_scaling(steering_angle, self.speed_now)
@@ -418,7 +416,7 @@ class AUG_Controller:
 
         # Calculate mean curvature from nearest waypoint forward (동일: MAP과 완전히 일치)
         if (self.waypoint_array_in_map.shape[0] - self.idx_nearest_waypoint) > 2:
-            lookahead_idx = int(np.floor(self.speed_now * self.speed_lookahead * 1.25 * 10.0))
+            lookahead_idx = int(np.floor(self.speed_now * self.speed_lookahead * 1.0 * 10.0))
             end_idx = min(
                 self.idx_nearest_waypoint + lookahead_idx,
                 self.waypoint_array_in_map.shape[0]

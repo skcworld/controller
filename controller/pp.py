@@ -296,7 +296,7 @@ class PP_Controller:
                 self.logger_warn("[PP Controller] L1_distance is 0, steering_angle is set to 0")
             steering_angle = 0.0
         else:
-            wheelbase = 0.33  # meters
+            wheelbase = 0.324  # meters
             steering_angle = np.arctan((2.0 * wheelbase * np.sin(eta)) / L1_distance)
 
         # Apply speed-based downscaling
@@ -361,7 +361,7 @@ class PP_Controller:
 
         # Calculate mean curvature from nearest waypoint forward (동일: MAP과 완전히 일치)
         if (self.waypoint_array_in_map.shape[0] - self.idx_nearest_waypoint) > 2:
-            lookahead_idx = int(np.floor(self.speed_now * self.speed_lookahead * 1.25 * 10.0))
+            lookahead_idx = int(np.floor(self.speed_now * self.speed_lookahead * 1.0 * 10.0))
             end_idx = min(
                 self.idx_nearest_waypoint + lookahead_idx,
                 self.waypoint_array_in_map.shape[0]

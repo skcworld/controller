@@ -369,7 +369,7 @@ class MAP_Controller:
 
         # Calculate mean curvature from nearest waypoint forward
         if (self.waypoint_array_in_map.shape[0] - self.idx_nearest_waypoint) > 2:
-            lookahead_idx = int(np.floor(self.speed_now * self.speed_lookahead * 1.25 * 10.0))
+            lookahead_idx = int(np.floor(self.speed_now * self.speed_lookahead * 1.0 * 10.0))
             end_idx = min(
                 self.idx_nearest_waypoint + lookahead_idx,
                 self.waypoint_array_in_map.shape[0]
