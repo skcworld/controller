@@ -1,0 +1,20 @@
+crazy_controller:
+  ros__parameters:
+    t_clip_min: 1.5 
+    t_clip_max: 5
+    m_l1: 0.3       
+    q_l1: 0.5        
+    speed_lookahead: 0.10
+    lat_err_coeff: 1.0
+    acc_scaler_for_steer: 1.2
+    dec_scaler_for_steer: 0.9 
+
+    start_scale_speed: 7.0
+    end_scale_speed: 8.0
+    downscale_factor: 0.2
+
+    speed_lookahead_for_steer: 0.0 
+
+    # Startup blending controls
+    diff_threshold: 3.0
+    deacc_gain: 0.4
